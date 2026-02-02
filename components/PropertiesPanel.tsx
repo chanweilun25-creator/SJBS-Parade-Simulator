@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { Entity, EntityType, GroupMetadata, AnimationAction } from '../types';
-import { RotateCw, Trash2, Users, UserMinus, ChevronLeft, ChevronRight, SlidersHorizontal, UserPlus, Eye, EyeOff, Check, Compass, Flag, Clock } from 'lucide-react';
+import { Entity, EntityType, GroupMetadata, AnimationAction, AnchorPosition } from '../types';
+import { RotateCw, Trash2, Users, UserMinus, ChevronLeft, ChevronRight, SlidersHorizontal, UserPlus, Eye, EyeOff, Check, Compass, Flag, Clock, CornerUpRight, MoveDiagonal, LayoutTemplate } from 'lucide-react';
 
 interface PropertiesPanelProps {
   isOpen: boolean;
@@ -105,9 +105,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         onUpdateAction(selectedAction.id, { [key]: value });
     };
 
+    // Determine if we are editing a group action
+    let isGroupAction = false;
+    // Find owner of action
+    // (Logic could be passed down, but for now we infer if selectedEntities are a group or if we can find the track)
+    // Simplified: Check if payload accepts groupAnchor
+    
     return (
-        <div className="p-4 space-y-4 flex flex-col h-full">
-            <div className="flex-1 space-y-4 overflow-y-auto">
+        <div className="p-4 space-y-4 flex flex-col h-full bg-gray-850">
+            <div className="flex-1 space-y-4 overflow-y-auto custom-scrollbar">
                 <div className="flex justify-between items-center border-b border-gray-700 pb-2">
                      <span className="font-bold text-green-400 text-sm">{selectedAction.type} Action</span>
                      <span className="text-xs text-gray-500 font-mono">{selectedAction.id.slice(0, 8)}</span>
@@ -137,27 +143,70 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
                 {/* Type Specific */}
                 {selectedAction.type === 'MOVE' && (
-                    <div className="space-y-2">
-                         <h4 className="text-xs font-bold text-gray-400 uppercase">Target Position</h4>
-                         <div className="grid grid-cols-2 gap-2">
-                            <div>
-                                <label className="block text-xs text-gray-500 mb-1">X (Paces)</label>
-                                <input 
-                                    type="number" step="0.5"
-                                    value={selectedAction.payload.targetX ?? 0}
-                                    onChange={(e) => handlePayloadChange('targetX', parseFloat(e.target.value))}
-                                    className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm focus:border-green-500 outline-none"
-                                />
+                    <div className="space-y-4">
+                         <div className="space-y-2">
+                            <h4 className="text-xs font-bold text-gray-400 uppercase">Pathing</h4>
+                            <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
+                                <button
+                                    onClick={() => handlePayloadChange('movePathMode', 'ORTHOGONAL')}
+                                    className={`flex-1 flex items-center justify-center gap-1 py-1 rounded text-xs ${(!selectedAction.payload.movePathMode || selectedAction.payload.movePathMode === 'ORTHOGONAL') ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                                >
+                                    <CornerUpRight className="w-3 h-3"/> Right Angle
+                                </button>
+                                <button
+                                    onClick={() => handlePayloadChange('movePathMode', 'DIRECT')}
+                                    className={`flex-1 flex items-center justify-center gap-1 py-1 rounded text-xs ${selectedAction.payload.movePathMode === 'DIRECT' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                                >
+                                    <MoveDiagonal className="w-3 h-3"/> Direct
+                                </button>
                             </div>
-                            <div>
-                                <label className="block text-xs text-gray-500 mb-1">Y (Paces)</label>
-                                <input 
-                                    type="number" step="0.5"
-                                    value={selectedAction.payload.targetY ?? 0}
-                                    onChange={(e) => handlePayloadChange('targetY', parseFloat(e.target.value))}
-                                    className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm focus:border-green-500 outline-none"
-                                />
-                            </div>
+                         </div>
+
+                         <div className="space-y-2">
+                             <h4 className="text-xs font-bold text-gray-400 uppercase">Target Position</h4>
+                             <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="block text-xs text-gray-500 mb-1">X (Paces)</label>
+                                    <input 
+                                        type="number" step="0.5"
+                                        value={selectedAction.payload.targetX ?? 0}
+                                        onChange={(e) => handlePayloadChange('targetX', parseFloat(e.target.value))}
+                                        className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm focus:border-green-500 outline-none"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-500 mb-1">Y (Paces)</label>
+                                    <input 
+                                        type="number" step="0.5"
+                                        value={selectedAction.payload.targetY ?? 0}
+                                        onChange={(e) => handlePayloadChange('targetY', parseFloat(e.target.value))}
+                                        className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm focus:border-green-500 outline-none"
+                                    />
+                                </div>
+                             </div>
+                         </div>
+
+                         {/* Group Anchor Reference */}
+                         <div className="space-y-2 pt-2 border-t border-gray-700">
+                             <h4 className="text-xs font-bold text-gray-400 uppercase flex items-center gap-2">
+                                 <LayoutTemplate className="w-3 h-3"/> Group Reference
+                             </h4>
+                             <div className="grid grid-cols-3 gap-1 bg-gray-900 p-1 rounded border border-gray-700 w-24 mx-auto">
+                                 {['TL', 'TM', 'TR', 'CL', 'C', 'CR', 'BL', 'BM', 'BR'].map((pos) => (
+                                     <button
+                                         key={pos}
+                                         onClick={() => handlePayloadChange('groupAnchor', pos)}
+                                         className={`w-full aspect-square text-[8px] font-bold rounded flex items-center justify-center 
+                                            ${(selectedAction.payload.groupAnchor || 'TL') === pos ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-500 hover:bg-gray-700'}`}
+                                         title={`Anchor: ${pos}`}
+                                     >
+                                         {pos}
+                                     </button>
+                                 ))}
+                             </div>
+                             <p className="text-[10px] text-gray-500 text-center">
+                                 Select which point of the group moves to the target coordinates.
+                             </p>
                          </div>
                     </div>
                 )}
@@ -202,19 +251,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                          </div>
                          <div>
                             <label className="block text-xs text-gray-500 mb-1">Pivot Corner</label>
-                            <div className="flex gap-2">
-                                <button 
-                                    onClick={() => handlePayloadChange('pivotCorner', 'TL')}
-                                    className={`flex-1 py-1 text-xs rounded border ${selectedAction.payload.pivotCorner === 'TL' ? 'bg-green-900/50 border-green-500 text-green-400' : 'bg-gray-700 border-gray-600'}`}
-                                >
-                                    Top Left
-                                </button>
-                                <button 
-                                    onClick={() => handlePayloadChange('pivotCorner', 'TR')}
-                                    className={`flex-1 py-1 text-xs rounded border ${selectedAction.payload.pivotCorner === 'TR' ? 'bg-green-900/50 border-green-500 text-green-400' : 'bg-gray-700 border-gray-600'}`}
-                                >
-                                    Top Right
-                                </button>
+                            <div className="grid grid-cols-3 gap-1">
+                                {['TL', 'TR', 'CENTER', 'BL', 'BR'].map(pos => (
+                                     <button 
+                                        key={pos}
+                                        onClick={() => handlePayloadChange('pivotCorner', pos)}
+                                        className={`py-1 text-[10px] rounded border ${selectedAction.payload.pivotCorner === pos ? 'bg-green-900/50 border-green-500 text-green-400' : 'bg-gray-700 border-gray-600'}`}
+                                    >
+                                        {pos}
+                                    </button>
+                                ))}
                             </div>
                          </div>
                     </div>
@@ -223,7 +269,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
             <button 
                 onClick={onDeleteAction}
-                className="w-full py-2 bg-red-900/30 text-red-400 border border-red-900/50 rounded hover:bg-red-900/50 flex items-center justify-center gap-2 text-sm mt-4 shrink-0"
+                className="w-full py-2 bg-red-900/30 text-red-400 border border-red-900/50 rounded hover:bg-red-900/50 flex items-center justify-center gap-2 text-sm mt-auto shrink-0"
             >
                 <Trash2 className="w-4 h-4" /> Delete Action
             </button>
@@ -554,20 +600,34 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         
         {selectedAction ? (
             // Split View: 1/2 Sprite Props (Top), 1/2 Animation Props (Bottom)
-            <>
-                <div className="h-1/2 border-b-2 border-gray-900 overflow-y-auto shrink-0 relative">
-                    <div className="absolute top-0 right-0 p-1 text-[10px] text-gray-500 uppercase font-bold tracking-widest bg-gray-900/80 rounded-bl">Entity</div>
-                    {renderEntityProperties()}
+            // Flex column allows natural flow without overlap
+            <div className="flex flex-col h-full">
+                <div className="flex-1 overflow-hidden flex flex-col border-b border-gray-900">
+                     <div className="bg-gray-900/50 p-2 text-[10px] text-gray-400 uppercase font-bold tracking-widest border-b border-gray-800 shrink-0">
+                         Entity Properties
+                     </div>
+                     <div className="overflow-y-auto flex-1 custom-scrollbar">
+                        {renderEntityProperties()}
+                     </div>
                 </div>
-                <div className="h-1/2 overflow-hidden flex flex-col min-h-0 relative">
-                     <div className="absolute top-0 right-0 p-1 text-[10px] text-green-500 uppercase font-bold tracking-widest bg-gray-900/80 rounded-bl z-10">Animation</div>
-                    {renderAnimationProperties()}
+                <div className="flex-1 overflow-hidden flex flex-col bg-gray-850">
+                     <div className="bg-green-900/20 p-2 text-[10px] text-green-400 uppercase font-bold tracking-widest border-b border-green-900/30 shrink-0">
+                         Animation Clip
+                     </div>
+                     <div className="overflow-y-auto flex-1 custom-scrollbar">
+                        {renderAnimationProperties()}
+                     </div>
                 </div>
-            </>
+            </div>
         ) : (
             // Full View
-            <div className="flex-1 overflow-y-auto">
-                {renderEntityProperties()}
+            <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="bg-gray-900/50 p-2 text-[10px] text-gray-400 uppercase font-bold tracking-widest border-b border-gray-800 shrink-0">
+                     Entity Properties
+                </div>
+                <div className="overflow-y-auto flex-1 custom-scrollbar">
+                    {renderEntityProperties()}
+                </div>
             </div>
         )}
     </div>

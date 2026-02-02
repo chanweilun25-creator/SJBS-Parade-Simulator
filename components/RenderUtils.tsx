@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { EntityType, Entity } from '../types';
 import { PIXELS_PER_PACE, ENTITY_SIZE_MAP } from '../constants';
@@ -8,13 +9,14 @@ export const getPersonVisuals = (type: EntityType, label: string = "") => {
     const isRSM = type === EntityType.RSM;
     const isColour = type === EntityType.COLOURS;
     const isRO = type === EntityType.REVIEWING_OFFICER;
+    const isHost = type === EntityType.HOST;
     // Heuristic for Escort: explicit type check or label
     const isEscort = label.includes('Escort') || label === 'Colours Sgt';
-    return { isOfficer, isRSM, isColour, isEscort, isRO };
+    return { isOfficer, isRSM, isColour, isEscort, isRO, isHost };
 };
 
 export const renderPersonSVG = (type: EntityType, label: string = "", customColor?: string) => {
-    const { isOfficer, isRSM, isColour, isEscort, isRO } = getPersonVisuals(type, label);
+    const { isOfficer, isRSM, isColour, isEscort, isRO, isHost } = getPersonVisuals(type, label);
     
     return (
         <g>
@@ -32,10 +34,16 @@ export const renderPersonSVG = (type: EntityType, label: string = "", customColo
                 // Tuxedo (Black Suit, White Shirt)
                 <g>
                     <rect x="-8" y="-3.5" width="16" height="7" rx="3" fill="#111" stroke="#333" strokeWidth="0.5" />
-                    {/* White Shirt Triangle */}
                     <path d="M -3 -3 L 3 -3 L 0 2 Z" fill="white" />
-                    {/* Bow Tie */}
                     <path d="M -2 -2 L 2 -2 L 0 0 Z" fill="#111" />
+                    <circle cx="0" cy="-2" r="0.5" fill="#111" />
+                </g>
+            ) : isHost ? (
+                // Host (Blue Suit, White Shirt)
+                <g>
+                    <rect x="-8" y="-3.5" width="16" height="7" rx="3" fill="#1e3a8a" stroke="#172554" strokeWidth="0.5" />
+                    <path d="M -3 -3 L 3 -3 L 0 2 Z" fill="white" />
+                    <path d="M -2 -2 L 2 -2 L 0 0 Z" fill="#1e3a8a" />
                     <circle cx="0" cy="-2" r="0.5" fill="#111" />
                 </g>
             ) : (
@@ -43,8 +51,8 @@ export const renderPersonSVG = (type: EntityType, label: string = "", customColo
                 <rect x="-8" y="-3.5" width="16" height="7" rx="3" fill="#F9FAFB" stroke="#9CA3AF" strokeWidth="0.5" />
             )}
             
-            {/* Epaulettes (Not for RO) */}
-            {!isRO && (
+            {/* Epaulettes (Not for RO/Host) */}
+            {!isRO && !isHost && (
                 <g>
                     <polygon points="-8,-2 -4,-2 -4.5,2 -7.5,2" fill="#111" />
                     <polygon points="8,-2 4,-2 4.5,2 7.5,2" fill="#111" />
@@ -62,6 +70,9 @@ export const renderPersonSVG = (type: EntityType, label: string = "", customColo
             {isRO ? (
                  // Brown Hair (Reviewing Officer)
                  <path d="M -4.5 -1 Q -5 -4 0 -4.5 Q 5 -4 4.5 -1 Q 3 2 0 -1 Q -3 2 -4.5 -1 Z" fill="#5D4037" />
+            ) : isHost ? (
+                 // Host Hair (Lighter/Different Style)
+                 <path d="M -4.5 -1 Q -5 -4 0 -4.5 Q 5 -4 4.5 -1 Q 4 1 0 -1 Q -4 1 -4.5 -1 Z" fill="#9ca3af" />
             ) : (isOfficer || isRSM) ? (
                 // Peak Cap
                 <g>

@@ -1,6 +1,6 @@
 
 import React, { useRef, useState, useMemo } from 'react';
-import { Entity, ParadeState, Coordinates, EntityType, GroupMetadata, AnimationAction, AnimationTrack } from '../types';
+import { Entity, ParadeState, Coordinates, EntityType, GroupMetadata, AnimationAction, AnimationTrack, AnchorPosition } from '../types';
 import { PIXELS_PER_PACE, TERRAIN_COLORS, GRID_MAJOR_INTERVAL, SELECTION_COLOR, ENTITY_SIZE_MAP, BOX_SELECT_BORDER, BOX_SELECT_FILL } from '../constants';
 import { renderEntityVisual } from './RenderUtils';
 
@@ -20,6 +20,8 @@ interface ParadeCanvasProps {
   selectedActionId?: string | null;
   onUpdateAction?: (actionId: string, updates: Partial<AnimationAction>) => void;
   isPlaying?: boolean;
+  // New prop for handling drop logic in parent
+  onObjectDrop?: (type: EntityType, x: number, y: number) => void;
 }
 
 export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
@@ -37,7 +39,8 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
   showPaths = true,
   selectedActionId,
   onUpdateAction,
-  isPlaying = false
+  isPlaying = false,
+  onObjectDrop
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -47,6 +50,7 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
   
   // Animation Path Dragging State
   const [draggingActionId, setDraggingActionId] = useState<string | null>(null);
+  const [draggingWaypointActionId, setDraggingWaypointActionId] = useState<string | null>(null);
   
   // Multi-select Box State
   const [isBoxSelecting, setIsBoxSelecting] = useState(false);
@@ -120,11 +124,11 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
     // Hit Test for Animation Path Handle (only if an action is selected and paths are shown)
     if (showPaths && selectedActionId) {
          // Find coordinates of target handle
-         // We iterate paths to find if we clicked a handle
          const actions = Object.values(parade.animation.tracks).flatMap((t: AnimationTrack) => t.actions);
          const targetAction = actions.find(a => a.id === selectedActionId);
          
          if (targetAction && targetAction.type === 'MOVE') {
+             // 1. Check Target Handle
              const tx = targetAction.payload.targetX;
              const ty = targetAction.payload.targetY;
              if (tx !== undefined && ty !== undefined) {
@@ -133,6 +137,31 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
                      setDraggingActionId(selectedActionId);
                      setIsDragging(true);
                      return; // Stop processing selection
+                 }
+             }
+             
+             // 2. Check Waypoint/Elbow Handle
+             if (targetAction.payload.movePathMode !== 'DIRECT') {
+                 // Determine where the handle currently IS
+                 let handleX = 0, handleY = 0;
+                 if (targetAction.payload.waypoint) {
+                     handleX = targetAction.payload.waypoint.x;
+                     handleY = targetAction.payload.waypoint.y;
+                 } else {
+                     // Default calculation if no explicit waypoint is set but we are orthogonal
+                     // We need approximate start position for hit testing default elbow,
+                     // but to keep it simple, we only hit test if the renderer drew the rect.
+                     // The renderer logic below ensures the rect is drawn at the right spot.
+                 }
+                 
+                 // Fallback check if we have explicit waypoint
+                 if (targetAction.payload.waypoint) {
+                     const distW = Math.sqrt(Math.pow(handleX - clickPaces.x, 2) + Math.pow(handleY - clickPaces.y, 2));
+                     if (distW < 0.5) {
+                         setDraggingWaypointActionId(selectedActionId);
+                         setIsDragging(true);
+                         return;
+                     }
                  }
              }
          }
@@ -214,6 +243,7 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
 
     const currentPaces = getPacesFromEvent(e);
     
+    // Handle Path End Point Dragging
     if (isDragging && draggingActionId && onUpdateAction) {
         let targetX = currentPaces.x;
         let targetY = currentPaces.y;
@@ -223,13 +253,51 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
             targetY = Math.round(targetY * 2) / 2;
         }
         
-        // Update Action Payload
         onUpdateAction(draggingActionId, {
-            payload: {
-                targetX, targetY
-            } // We need to preserve other payload data if necessary, but Partial handles merge
+            payload: { targetX, targetY } 
         });
+        return;
+    }
+
+    // Handle Path Waypoint Dragging
+    if (isDragging && draggingWaypointActionId && onUpdateAction) {
+        let wx = currentPaces.x;
+        let wy = currentPaces.y;
         
+        if (snapToGrid) {
+            wx = Math.round(wx * 2) / 2;
+            wy = Math.round(wy * 2) / 2;
+        }
+
+        // We need to fetch current payload to preserve other fields?
+        // onUpdateAction is Partial merge, but payload is a nested object, so we must be careful.
+        // Usually React state updates are shallow merge on top level. 
+        // PropertiesPanel implementation of `onUpdateAction` does:
+        // `const proposed = { ...track.actions[actionIndex], ...updates };`
+        // But `updates.payload` will overwrite `track.actions[actionIndex].payload` if we aren't careful.
+        // The implementation in Simulator.tsx:
+        // `onUpdateAction(draggingActionId, { payload: { targetX, targetY } })`
+        // We need to make sure we don't wipe existing payload data.
+        // Simulator.tsx `handleUpdateAction` implementation: 
+        // It does `newActions[actionIndex] = { ...newActions[actionIndex], ...updates };`
+        // If updates contains `payload`, it overwrites the whole payload object? 
+        // Check Simulator.tsx: `const proposed = { ...track.actions[actionIndex], ...updates };`
+        // Yes, if we pass `payload: { waypoint }`, we lose `targetX` etc.
+        // WE MUST merge the payload manually in the `onUpdateAction` call here, 
+        // OR fix Simulator.tsx to deep merge payload.
+        // Fix: In Simulator.tsx, we rely on the caller to provide full payload update or we fix Simulator.
+        // Looking at PropertiesPanel: it does `onUpdateAction(..., { payload: { ...selectedAction.payload, [key]: value } })`.
+        // So we should do the same here. We need the current action to merge payload.
+        
+        // Find the action
+        const actions = Object.values(parade.animation.tracks).flatMap((t: AnimationTrack) => t.actions);
+        const action = actions.find(a => a.id === draggingWaypointActionId);
+        
+        if (action) {
+            onUpdateAction(draggingWaypointActionId, {
+                payload: { ...action.payload, waypoint: { x: wx, y: wy } }
+            });
+        }
         return;
     }
 
@@ -321,6 +389,7 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
     setIsBoxSelecting(false);
     setSelectionBox(null);
     setDraggingActionId(null);
+    setDraggingWaypointActionId(null);
     setInitialEntityPositions(new Map());
   };
 
@@ -344,93 +413,11 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
     snapX = Math.max(0, Math.min(parade.config.width, snapX));
     snapY = Math.max(0, Math.min(parade.config.height, snapY));
 
-    const newEntities: Entity[] = [];
-    let newGroups: Record<string, GroupMetadata> | undefined = undefined;
-
-    if (droppedEntityType === EntityType.CONTINGENT) {
-        const rows = 3;
-        const cols = 9;
-        const spacing = 1; 
-        const groupId = crypto.randomUUID();
-
-        newGroups = {
-            [groupId]: {
-                id: groupId,
-                label: 'Contingent',
-                showLabel: false,
-                type: 'CONTINGENT',
-                rotation: 0,
-                config: { rows, cols }
-            }
-        };
-
-        const formationWidth = (cols - 1) * spacing;
-        const startX = snapX - (formationWidth / 2);
-        const startY = snapY;
-
-        newEntities.push({
-            id: crypto.randomUUID(),
-            type: EntityType.OFFICER,
-            label: '',
-            x: snapX,
-            y: snapY - 3,
-            rotation: 0,
-            groupId
-        });
-
-        for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
-                newEntities.push({
-                    id: crypto.randomUUID(),
-                    type: EntityType.TROOPER,
-                    label: '',
-                    x: startX + (c * spacing),
-                    y: startY + (r * spacing),
-                    rotation: 0,
-                    groupId
-                });
-            }
-        }
-    } else if (droppedEntityType === EntityType.COLOURS) {
-        const groupId = crypto.randomUUID();
-        newGroups = {
-            [groupId]: {
-                id: groupId,
-                label: 'Colours Party',
-                showLabel: false,
-                type: 'COLOURS_PARTY',
-                rotation: 0,
-                config: { 
-                    colourCount: 1,
-                    flagColors: ['#EF4444']
-                }
-            }
-        };
-
-        newEntities.push({ id: crypto.randomUUID(), type: EntityType.COLOURS, label: 'Ensign', x: snapX, y: snapY, rotation: 0, groupId });
-        newEntities.push({ id: crypto.randomUUID(), type: EntityType.TROOPER, label: 'Escort', x: snapX - 1.5, y: snapY, rotation: 0, groupId });
-        newEntities.push({ id: crypto.randomUUID(), type: EntityType.TROOPER, label: 'Escort', x: snapX + 1.5, y: snapY, rotation: 0, groupId });
-        newEntities.push({ id: crypto.randomUUID(), type: EntityType.RSM, label: 'CSM', x: snapX, y: snapY + 2, rotation: 0, groupId });
-
-    } else {
-        let label = '';
-        if (droppedEntityType === EntityType.SALUTING_BASE) label = 'Saluting Base';
-        else if (droppedEntityType === EntityType.ROSTRUM) label = 'Rostrum';
-        else if (droppedEntityType === EntityType.REVIEWING_OFFICER) label = 'Reviewing Officer';
-        else if (droppedEntityType === EntityType.AWARD_TABLE) label = 'Award Table';
-
-        newEntities.push({
-            id: crypto.randomUUID(),
-            type: droppedEntityType,
-            label: label,
-            x: snapX,
-            y: snapY,
-            rotation: 0
-        });
+    // Delegate creation to parent
+    if (onObjectDrop) {
+        onObjectDrop(droppedEntityType, snapX, snapY);
     }
-
-    onEntitiesChange([...parade.entities, ...newEntities], newGroups);
-    onSelectionChange(newEntities.map(e => e.id));
+    
     onDropComplete();
   };
 
@@ -471,6 +458,31 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
     return labels;
   }, [parade.entities, parade.groups]);
 
+  // --- Helper to calculate Anchor Position from Group ---
+  const getAnchorPos = (entities: Entity[], groupId: string, anchorType: AnchorPosition = 'TL') => {
+      const members = entities.filter(e => e.groupId === groupId);
+      if (members.length === 0) return { x: 0, y: 0 };
+      
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      members.forEach(m => {
+          if (m.x < minX) minX = m.x;
+          if (m.x > maxX) maxX = m.x;
+          if (m.y < minY) minY = m.y;
+          if (m.y > maxY) maxY = m.y;
+      });
+
+      const midX = (minX + maxX) / 2;
+      const midY = (minY + maxY) / 2;
+
+      let ax = minX, ay = minY;
+      if (anchorType.includes('M') || anchorType === 'C') ax = midX;
+      if (anchorType.includes('R')) ax = maxX;
+      if (anchorType.includes('C') || anchorType.includes('CL') || anchorType.includes('CR')) ay = midY;
+      if (anchorType.includes('B')) ay = maxY;
+
+      return { x: ax, y: ay };
+  };
+
   // --- Rendering ---
   const renderGrid = () => {
     const lines = [];
@@ -508,21 +520,19 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
     return (
         <g id="paths-layer">
             {Object.keys(parade.animation.tracks).map(ownerId => {
-                const track = parade.animation.tracks[ownerId];
+                const track: AnimationTrack = parade.animation.tracks[ownerId];
                 // Check if group
                 const group = parade.groups[ownerId];
                 let currentX = 0, currentY = 0;
 
                 if (group) {
-                    // Logic for groups: Find "Anchor" (Leader) initial position
-                    // We need to look at entities
                     const members = parade.entities.filter(e => e.groupId === ownerId);
                     if (members.length === 0) return null;
                     
-                    // Prefer Officer, then any member
-                    const anchor = members.find(m => m.type === EntityType.OFFICER) || members[0];
-                    currentX = anchor.x;
-                    currentY = anchor.y;
+                    const firstAction = track.actions[0];
+                    const anchorPos = getAnchorPos(parade.entities, ownerId, firstAction?.payload.groupAnchor || 'TL');
+                    currentX = anchorPos.x;
+                    currentY = anchorPos.y;
                 } else {
                     // Single Entity Path
                     const entity = parade.entities.find(e => e.id === ownerId);
@@ -539,19 +549,117 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
                         const targetY = action.payload.targetY ?? currentY;
                         
                         const isSelected = action.id === selectedActionId;
+                        const strokeColor = isSelected ? "#34d399" : "rgba(255, 255, 0, 0.4)";
+                        
+                        // Check if we have an explicit waypoint
+                        if (action.payload.waypoint) {
+                            const wx = action.payload.waypoint.x;
+                            const wy = action.payload.waypoint.y;
+                            
+                            pathSegments.push(
+                                <polyline
+                                    key={`${action.id}-poly-waypoint`}
+                                    points={`${currentX * PIXELS_PER_PACE},${currentY * PIXELS_PER_PACE} ${wx * PIXELS_PER_PACE},${wy * PIXELS_PER_PACE} ${targetX * PIXELS_PER_PACE},${targetY * PIXELS_PER_PACE}`}
+                                    fill="none"
+                                    stroke={strokeColor}
+                                    strokeWidth={isSelected ? "3" : "2"}
+                                    strokeDasharray="4 2"
+                                />
+                            );
+                            
+                            if (isSelected) {
+                                pathSegments.push(
+                                    <rect
+                                        key={`${action.id}-elbow`}
+                                        x={wx * PIXELS_PER_PACE - 4}
+                                        y={wy * PIXELS_PER_PACE - 4}
+                                        width={8}
+                                        height={8}
+                                        fill="#3b82f6"
+                                        stroke="white"
+                                        className="cursor-move"
+                                        onMouseDown={(e) => {
+                                            e.stopPropagation();
+                                            setDraggingWaypointActionId(action.id);
+                                            setIsDragging(true);
+                                        }}
+                                    >
+                                        <title>Drag Pre-Destination Waypoint</title>
+                                    </rect>
+                                );
+                            }
 
-                        pathSegments.push(
-                            <line 
-                                key={action.id}
-                                x1={currentX * PIXELS_PER_PACE}
-                                y1={currentY * PIXELS_PER_PACE}
-                                x2={targetX * PIXELS_PER_PACE}
-                                y2={targetY * PIXELS_PER_PACE}
-                                stroke={isSelected ? "#34d399" : "rgba(255, 255, 0, 0.4)"}
-                                strokeWidth={isSelected ? "3" : "2"}
-                                strokeDasharray="4 2"
-                            />
-                        );
+                        } 
+                        // Orthogonal Handling (Default L-Shape unless DIRECT is explicitly set)
+                        else if (action.payload.movePathMode !== 'DIRECT') {
+                            // Draw L shape
+                            let midX, midY;
+                            if (action.payload.orthogonalOrder === 'Y_THEN_X') {
+                                // Vertical then Horizontal
+                                midX = currentX;
+                                midY = targetY;
+                            } else {
+                                // Horizontal then Vertical (Default)
+                                midX = targetX;
+                                midY = currentY;
+                            }
+
+                            pathSegments.push(
+                                <polyline
+                                    key={`${action.id}-poly`}
+                                    points={`${currentX * PIXELS_PER_PACE},${currentY * PIXELS_PER_PACE} ${midX * PIXELS_PER_PACE},${midY * PIXELS_PER_PACE} ${targetX * PIXELS_PER_PACE},${targetY * PIXELS_PER_PACE}`}
+                                    fill="none"
+                                    stroke={strokeColor}
+                                    strokeWidth={isSelected ? "3" : "2"}
+                                    strokeDasharray="4 2"
+                                />
+                            );
+
+                            // Draggable Elbow Handle (Only if selected)
+                            if (isSelected && onUpdateAction) {
+                                pathSegments.push(
+                                    <rect
+                                        key={`${action.id}-elbow`}
+                                        x={midX * PIXELS_PER_PACE - 4}
+                                        y={midY * PIXELS_PER_PACE - 4}
+                                        width={8}
+                                        height={8}
+                                        fill="#3b82f6"
+                                        stroke="white"
+                                        className="cursor-move"
+                                        onMouseDown={(e) => {
+                                            e.stopPropagation();
+                                            // Initialize waypoint to current elbow pos to start dragging
+                                            onUpdateAction(action.id, { 
+                                                payload: { 
+                                                    ...action.payload, 
+                                                    waypoint: { x: midX, y: midY }
+                                                } 
+                                            });
+                                            setDraggingWaypointActionId(action.id);
+                                            setIsDragging(true);
+                                        }}
+                                    >
+                                        <title>Drag to create Pre-Destination</title>
+                                    </rect>
+                                );
+                            }
+
+                        } else {
+                            // Direct Line - No Draggable Handle!
+                            pathSegments.push(
+                                <line 
+                                    key={action.id}
+                                    x1={currentX * PIXELS_PER_PACE}
+                                    y1={currentY * PIXELS_PER_PACE}
+                                    x2={targetX * PIXELS_PER_PACE}
+                                    y2={targetY * PIXELS_PER_PACE}
+                                    stroke={strokeColor}
+                                    strokeWidth={isSelected ? "3" : "2"}
+                                    strokeDasharray="4 2"
+                                />
+                            );
+                        }
                         
                         pathSegments.push(
                             <circle 
@@ -604,7 +712,7 @@ export const ParadeCanvas: React.FC<ParadeCanvasProps> = ({
     const hideLabel = isColoursParty || 
                       ent.label === 'Colours Sgt' || 
                       ent.type === EntityType.SALUTING_BASE || 
-                      ent.type === EntityType.TROPHY_CUP ||
+                      ent.type === EntityType.TROPHY_CUP || 
                       ent.type === EntityType.TROPHY_PLAQUE ||
                       ent.type === EntityType.TROPHY_SHIELD;
 

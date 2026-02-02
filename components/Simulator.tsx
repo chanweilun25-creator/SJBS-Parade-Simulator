@@ -8,9 +8,10 @@ import { ParadeCanvas } from './ParadeCanvas';
 import { NotchBar } from './NotchBar';
 import { TimelinePanel } from './TimelinePanel';
 import { ExportModal } from './ExportModal';
+import { ColoursConfigModal } from './ColoursConfigModal';
 import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, PIXELS_PER_PACE } from '../constants';
 import { getParadeStateAtTime } from '../utils/animationUtils';
-import { Download, Clock } from 'lucide-react';
+import { Download, Clock, CircleHelp } from 'lucide-react';
 
 interface SimulatorProps {
   initialState: ParadeState;
@@ -46,6 +47,10 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
   
   // Export Modal State
   const [isExportModalOpen, setExportModalOpen] = useState(false);
+
+  // Colours Party Modal State
+  const [isColoursModalOpen, setColoursModalOpen] = useState(false);
+  const [pendingDropLocation, setPendingDropLocation] = useState<{x: number, y: number} | null>(null);
 
   const animationRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef<number>(0);
@@ -232,6 +237,37 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
           }
       }
 
+      // Calculate state at START TIME to ensure continuity and prevent displacement
+      const stateAtStart = getParadeStateAtTime(currentState, startTime);
+      let currentX = 0, currentY = 0, currentRot = 0;
+
+      if (currentState.groups[ownerId]) {
+          // It's a group
+          const members = stateAtStart.entities.filter(e => e.groupId === ownerId);
+          // Find anchor (Officer or first)
+          const anchor = members.find(m => m.type === EntityType.OFFICER) || members[0];
+          if (anchor) {
+              currentX = anchor.x;
+              currentY = anchor.y;
+              // Group rotation logic: 
+              const grp = stateAtStart.groups[ownerId];
+              currentRot = grp ? grp.rotation : 0;
+          }
+      } else {
+          // It's an entity
+          const ent = stateAtStart.entities.find(e => e.id === ownerId);
+          if (ent) {
+              currentX = ent.x;
+              currentY = ent.y;
+              currentRot = ent.rotation;
+          }
+      }
+      
+      // Guard against NaN
+      if (!isFinite(currentX)) currentX = 0;
+      if (!isFinite(currentY)) currentY = 0;
+      if (!isFinite(currentRot)) currentRot = 0;
+
       const newAction: AnimationAction = {
           id: crypto.randomUUID(),
           type,
@@ -240,34 +276,19 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
           payload: {}
       };
 
-      // Set defaults based on type
+      // Set defaults based on type AND current state
       if (type === 'MOVE') {
-          const current = getParadeStateAtTime(currentState, startTime);
-          
-          let refX = 0, refY = 0;
-          if (currentState.groups[ownerId]) {
-              const members = current.entities.filter(e => e.groupId === ownerId);
-              const anchor = members.find(m => m.type === EntityType.OFFICER) || members[0];
-              if (anchor) {
-                  refX = anchor.x;
-                  refY = anchor.y;
-              }
-          } else {
-              const entity = current.entities.find(e => e.id === ownerId);
-              if (entity) {
-                  refX = entity.x;
-                  refY = entity.y;
-              }
-          }
-
-          newAction.payload.targetX = refX + 5;
-          newAction.payload.targetY = refY;
-
+          newAction.payload.targetX = currentX + 5;
+          newAction.payload.targetY = currentY;
+          newAction.payload.movePathMode = 'ORTHOGONAL';
+          newAction.payload.orthogonalOrder = 'X_THEN_Y';
       } else if (type === 'TURN') {
-          newAction.payload.targetRotation = 90;
+          // Default to current rotation + 90 so it visibly does something relative to now
+          newAction.payload.targetRotation = (currentRot + 90) % 360;
       } else if (type === 'WHEEL') {
           newAction.payload.wheelAngle = 90;
-          newAction.payload.pivotCorner = 'TL';
+          // Default to Center pivot to avoid wild swinging if TL is far from center
+          newAction.payload.pivotCorner = 'CENTER'; 
       }
 
       const newTracks = {
@@ -305,7 +326,8 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
       if (!selectedActionId) return;
       // Find owner of current selection
       let ownerId = '';
-      for (const [oid, track] of Object.entries(currentState.animation.tracks)) {
+      for (const [oid, t] of Object.entries(currentState.animation.tracks)) {
+          const track = t as AnimationTrack;
           if (track.actions.some(a => a.id === selectedActionId)) {
               ownerId = oid;
               break;
@@ -347,7 +369,16 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
       }
 
       const newActions = [...track.actions];
-      newActions[actionIndex] = { ...newActions[actionIndex], ...updates };
+      // Merge payload deeply if provided, otherwise standard shallow merge
+      if (updates.payload) {
+          newActions[actionIndex] = {
+              ...newActions[actionIndex],
+              ...updates,
+              payload: { ...newActions[actionIndex].payload, ...updates.payload }
+          };
+      } else {
+          newActions[actionIndex] = { ...newActions[actionIndex], ...updates };
+      }
 
       const newTracks = {
           ...currentState.animation.tracks,
@@ -363,6 +394,20 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
       handleStateChange({
           animation: { ...currentState.animation, trackOrder: newOrder }
       });
+  };
+
+  const handleSelectAction = (action: AnimationAction | null) => {
+      setSelectedActionId(action ? action.id : null);
+      
+      if (action) {
+          // Find the owner ID of this action to select the sprite
+          const ownerId = Object.keys(currentState.animation.tracks).find(oid => 
+              currentState.animation.tracks[oid].actions.some(a => a.id === action.id)
+          );
+          if (ownerId) {
+              setSelectedIds([ownerId]);
+          }
+      }
   };
 
   // --- Group Logic ---
@@ -389,23 +434,76 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
   };
 
   const handleUngroup = () => {
-      const groupsAffected = new Set<string>();
-      
+      const selectedEntities = currentState.entities.filter(e => selectedIds.includes(e.id));
+      const newTracks = { ...currentState.animation.tracks };
+      let tracksModified = false;
+      const groupsToCheckForEmpty = new Set<string>();
+
+      // 1. Process each selected individual
+      selectedEntities.forEach(ent => {
+          if (ent.groupId) {
+              groupsToCheckForEmpty.add(ent.groupId);
+              const groupTrack = newTracks[ent.groupId];
+              
+              // Bake animations if group had any
+              if (groupTrack && groupTrack.actions.length > 0) {
+                   if (!newTracks[ent.id]) {
+                       newTracks[ent.id] = { ownerId: ent.id, actions: [] };
+                   }
+                   
+                   groupTrack.actions.forEach(action => {
+                        const endTime = action.startTime + action.duration;
+                        const stateAtEnd = getParadeStateAtTime(currentState, endTime);
+                        const memberEndState = stateAtEnd.entities.find(e => e.id === ent.id);
+                        
+                        if (memberEndState) {
+                             const moveAction: AnimationAction = {
+                                 id: crypto.randomUUID(),
+                                 type: 'MOVE',
+                                 startTime: action.startTime,
+                                 duration: action.duration,
+                                 payload: {
+                                     targetX: memberEndState.x,
+                                     targetY: memberEndState.y,
+                                     movePathMode: action.payload.movePathMode,
+                                     orthogonalOrder: action.payload.orthogonalOrder,
+                                     waypoint: action.payload.waypoint
+                                 }
+                             };
+                             newTracks[ent.id].actions.push(moveAction);
+
+                             if (action.type === 'TURN' || action.type === 'WHEEL') {
+                                 const turnAction: AnimationAction = {
+                                     id: crypto.randomUUID(),
+                                     type: 'TURN',
+                                     startTime: action.startTime,
+                                     duration: action.duration,
+                                     payload: {
+                                         targetRotation: memberEndState.rotation
+                                     }
+                                 };
+                                 newTracks[ent.id].actions.push(turnAction);
+                             }
+                        }
+                   });
+                   tracksModified = true;
+              }
+          }
+      });
+
+      // 2. Remove groupId from selected entities
       const newEntities = currentState.entities.map(ent => {
           if (selectedIds.includes(ent.id)) {
-              if (ent.groupId) groupsAffected.add(ent.groupId);
               return { ...ent, groupId: undefined };
           }
           return ent;
       });
 
+      // 3. Clean up empty groups
       const newGroups = { ...currentState.groups };
-      const newTracks = { ...currentState.animation.tracks };
-      let tracksModified = false;
-
-      groupsAffected.forEach(gid => {
-          const remainingMembers = newEntities.filter(e => e.groupId === gid);
-          if (remainingMembers.length === 0) {
+      groupsToCheckForEmpty.forEach(gid => {
+          const membersLeft = newEntities.filter(e => e.groupId === gid);
+          if (membersLeft.length === 0) {
               delete newGroups[gid];
               if (newTracks[gid]) {
                   delete newTracks[gid];
@@ -444,6 +542,7 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
           updates.rotation !== undefined
       );
 
+      // (Logic for Colour Count adjustment remains same)
       if (currentGroup.type === 'COLOURS_PARTY' && updates.config?.colourCount !== undefined) {
           const newCount = updates.config.colourCount;
           const currentColors = currentGroup.config?.flagColors || [];
@@ -468,6 +567,7 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
            const rotation = newMeta.rotation; 
            newEntities = newEntities.filter(e => e.groupId !== id);
 
+           // ... (Entity Regeneration Logic matches existing) ...
            if (newMeta.type === 'CONTINGENT' && newMeta.config) {
                const rows = newMeta.config.rows || 3;
                const cols = newMeta.config.cols || 9;
@@ -517,10 +617,8 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
           }
       } else if (currentGroup.type === 'GENERIC' && updates.rotation !== undefined) {
            const oldRot = currentGroup.rotation || 0;
-           // Rotate around geometric center of the group
            const members = newEntities.filter(e => e.groupId === id);
            if (members.length > 0) {
-               // Calculate Center
                const minX = Math.min(...members.map(e => e.x));
                const maxX = Math.max(...members.map(e => e.x));
                const minY = Math.min(...members.map(e => e.y));
@@ -548,6 +646,14 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
            }
       }
 
+      // CRITICAL FIX: Ensure selection is updated BEFORE pushing state to avoid Property Panel closing/resetting
+      // We calculate new IDs and update selection immediately.
+      // Since pushState updates history synchronously, next render will have both new entities and new selection.
+      if (hasRegenerated) {
+          const newGroupIds = newEntities.filter(e => e.groupId === id).map(e => e.id);
+          setSelectedIds(newGroupIds);
+      }
+      
       pushState({
           ...currentState,
           entities: newEntities,
@@ -560,8 +666,9 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
       setScale(prev => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev + delta)));
   };
 
+  // Revert to fit to screen
   const handleResetZoom = () => {
-      setScale(1);
+      centerCanvas();
   };
 
   const handleUndo = () => {
@@ -575,6 +682,144 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
   const handleSave = () => {
       saveParade(currentState);
       alert('Parade saved successfully!');
+  };
+
+  // --- Object Drop Handler ---
+  const handleObjectDrop = (type: EntityType, x: number, y: number) => {
+      if (type === EntityType.COLOURS) {
+          setPendingDropLocation({ x, y });
+          setColoursModalOpen(true);
+      } else {
+          // Immediate creation for non-configured entities
+          createEntities(type, x, y);
+      }
+      setDroppedEntityType(null);
+  };
+
+  const handleColoursConfigConfirm = (count: number, colors: string[]) => {
+      if (pendingDropLocation) {
+          createEntities(EntityType.COLOURS, pendingDropLocation.x, pendingDropLocation.y, { count, colors });
+      }
+      setColoursModalOpen(false);
+      setPendingDropLocation(null);
+  };
+
+  const createEntities = (type: EntityType, x: number, y: number, config?: any) => {
+      const newEntities: Entity[] = [];
+      let newGroups = { ...currentState.groups };
+      const newSelectedIds: string[] = [];
+
+      if (type === EntityType.CONTINGENT) {
+        const rows = 3;
+        const cols = 9;
+        const spacing = 1; 
+        const groupId = crypto.randomUUID();
+
+        newGroups[groupId] = {
+            id: groupId,
+            label: 'Contingent',
+            showLabel: false,
+            type: 'CONTINGENT',
+            rotation: 0,
+            config: { rows, cols }
+        };
+
+        const formationWidth = (cols - 1) * spacing;
+        const startX = x - (formationWidth / 2);
+        const startY = y;
+
+        // Officer
+        const offId = crypto.randomUUID();
+        newEntities.push({ id: offId, type: EntityType.OFFICER, label: '', x: x, y: y - 3, rotation: 0, groupId });
+        newSelectedIds.push(offId);
+
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const tid = crypto.randomUUID();
+                newEntities.push({ id: tid, type: EntityType.TROOPER, label: '', x: startX + (c * spacing), y: startY + (r * spacing), rotation: 0, groupId });
+                newSelectedIds.push(tid);
+            }
+        }
+    } else if (type === EntityType.COLOURS) {
+        const groupId = crypto.randomUUID();
+        const count = config?.count || 1;
+        const colors = config?.colors || ['#EF4444'];
+        
+        newGroups[groupId] = {
+            id: groupId,
+            label: 'Colours Party',
+            showLabel: false,
+            type: 'COLOURS_PARTY',
+            rotation: 0,
+            config: { 
+                colourCount: count,
+                flagColors: colors
+            }
+        };
+
+        const spacing = 1.5;
+        let startX = x;
+        if (count > 1) {
+            const width = (count - 1) * spacing;
+            startX = x - (width / 2);
+        }
+
+        // Ensigns
+        for(let i=0; i<count; i++) {
+            const eid = crypto.randomUUID();
+            newEntities.push({ id: eid, type: EntityType.COLOURS, label: count > 1 ? `Ensign ${i+1}` : 'Ensign', x: startX + (i * spacing), y: y, rotation: 0, groupId });
+            newSelectedIds.push(eid);
+        }
+        
+        // Escorts (simplified logic: if 1 colour -> 2 escorts. if multiple -> flankers)
+        // Replicating standard logic: 1 colour = L/R escort. Multiple = L/R escort for line.
+        // Let's stick to standard party formation: Ensigns in line, Escorts flanking whole line?
+        // Logic from previous: Flankers on each ensign? No, standard is usually line of colours with escorts.
+        // Re-using the generation logic from updateGroup roughly:
+        
+        // Front Row: Escort, [Colours...], Escort
+        // Using slightly wider spacing for escorts
+        const escortLeftId = crypto.randomUUID();
+        newEntities.push({ id: escortLeftId, type: EntityType.TROOPER, label: 'Escort', x: startX - 1.5, y: y, rotation: 0, groupId });
+        newSelectedIds.push(escortLeftId);
+        
+        const escortRightId = crypto.randomUUID();
+        newEntities.push({ id: escortRightId, type: EntityType.TROOPER, label: 'Escort', x: startX + ((count-1) * spacing) + 1.5, y: y, rotation: 0, groupId });
+        newSelectedIds.push(escortRightId);
+
+        // Rear: CSM
+        const csmId = crypto.randomUUID();
+        newEntities.push({ id: csmId, type: EntityType.RSM, label: 'CSM', x: x, y: y + 2, rotation: 0, groupId });
+        newSelectedIds.push(csmId);
+
+    } else {
+        let label = '';
+        if (type === EntityType.SALUTING_BASE) label = 'Saluting Base';
+        else if (type === EntityType.ROSTRUM) label = 'Rostrum';
+        else if (type === EntityType.REVIEWING_OFFICER) label = 'Reviewing Officer';
+        else if (type === EntityType.HOST) label = 'Host';
+        else if (type === EntityType.AWARD_TABLE) label = 'Award Table';
+        else if (type === EntityType.ORDERLY) label = 'Orderly';
+
+        const id = crypto.randomUUID();
+        newEntities.push({
+            id,
+            type: type,
+            label: label,
+            x: x,
+            y: y,
+            rotation: 0
+        });
+        newSelectedIds.push(id);
+    }
+
+    pushState({
+        ...currentState,
+        entities: [...currentState.entities, ...newEntities],
+        groups: newGroups,
+        config: { ...currentState.config, lastModified: Date.now() }
+    });
+    setSelectedIds(newSelectedIds);
   };
 
   // Keyboard Shortcuts
@@ -615,7 +860,7 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
 
   const selectedEntities = currentState.entities.filter(ent => selectedIds.includes(ent.id));
   const selectedAction = selectedActionId 
-    ? Object.values(currentState.animation.tracks)
+    ? (Object.values(currentState.animation.tracks) as AnimationTrack[])
         .flatMap(t => t.actions)
         .find(a => a.id === selectedActionId) 
     : undefined;
@@ -630,6 +875,12 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
         parade={displayState}
       />
       
+      <ColoursConfigModal 
+        isOpen={isColoursModalOpen}
+        onClose={() => { setColoursModalOpen(false); setPendingDropLocation(null); }}
+        onConfirm={handleColoursConfigConfirm}
+      />
+
       <SpritePanel 
         isOpen={isSpritePanelOpen}
         onToggle={() => setSpritePanelOpen(!isSpritePanelOpen)}
@@ -654,9 +905,32 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
                     <Download className="w-3 h-3" /> Export Layout
                 </button>
             </div>
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-                <Clock className="w-3 h-3" />
-                <span>Last Saved: {lastModified}</span>
+            
+            <div className="flex items-center gap-4">
+                {/* Keyboard Shortcuts Tooltip */}
+                <div className="group relative flex items-center">
+                    <div className="p-1 rounded-full text-gray-500 hover:text-white hover:bg-gray-800 cursor-help transition-colors">
+                        <CircleHelp className="w-5 h-5" />
+                    </div>
+                    {/* Tooltip Content */}
+                    <div className="absolute top-full right-0 mt-2 w-64 p-4 bg-gray-800 border border-gray-700 rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto z-50">
+                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 border-b border-gray-700 pb-1">Shortcuts</h3>
+                        <div className="space-y-1.5 text-xs text-gray-300">
+                            <div className="flex justify-between"><span>Pan Tool</span> <span className="font-mono text-gray-500">Hold Space</span></div>
+                            <div className="flex justify-between"><span>Toggle Tool</span> <span className="font-mono text-gray-500">Ctrl</span></div>
+                            <div className="flex justify-between"><span>Multi-Select</span> <span className="font-mono text-gray-500">Shift+Click</span></div>
+                            <div className="flex justify-between"><span>Delete</span> <span className="font-mono text-gray-500">Del/Bksp</span></div>
+                            <div className="flex justify-between"><span>Undo</span> <span className="font-mono text-gray-500">Ctrl+Z</span></div>
+                            <div className="flex justify-between"><span>Redo</span> <span className="font-mono text-gray-500">Ctrl+Shift+Z</span></div>
+                            <div className="flex justify-between"><span>Play/Pause</span> <span className="font-mono text-gray-500">Space</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <Clock className="w-3 h-3" />
+                    <span>Last Saved: {lastModified}</span>
+                </div>
             </div>
         </div>
 
@@ -696,6 +970,7 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
                 selectedActionId={selectedActionId}
                 onUpdateAction={handleUpdateAction}
                 isPlaying={isPlaying}
+                onObjectDrop={handleObjectDrop}
              />
         </div>
 
@@ -710,7 +985,7 @@ export const Simulator: React.FC<SimulatorProps> = ({ initialState, onExit }) =>
             onAddAction={handleAddAction}
             onUpdateAction={(oid, aid, u) => handleUpdateAction(aid, u)}
             onDeleteAction={handleDeleteAction}
-            onSelectAction={(action) => setSelectedActionId(action ? action.id : null)}
+            onSelectAction={handleSelectAction}
             selectedActionId={selectedActionId}
             onTrackReorder={handleTrackReorder}
         />

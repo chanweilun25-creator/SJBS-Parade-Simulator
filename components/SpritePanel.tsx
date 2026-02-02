@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { EntityType } from '../types';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -23,6 +24,7 @@ export const SpritePanel: React.FC<SpritePanelProps> = ({ isOpen, onToggle, onDr
 
   const peopleItems = [
     { type: EntityType.REVIEWING_OFFICER, label: 'Reviewing Officer', icon: getPreviewIcon(EntityType.REVIEWING_OFFICER) },
+    { type: EntityType.HOST, label: 'Host', icon: getPreviewIcon(EntityType.HOST) },
     { type: EntityType.PC, label: 'Parade Comd', icon: getPreviewIcon(EntityType.PC) },
     { type: EntityType.RSM, label: 'RSM', icon: getPreviewIcon(EntityType.RSM) },
     { type: EntityType.COLOURS, label: 'Colours Party', icon: getPreviewIcon(EntityType.COLOURS) },
@@ -35,7 +37,7 @@ export const SpritePanel: React.FC<SpritePanelProps> = ({ isOpen, onToggle, onDr
              <g transform="translate(10,10) scale(0.6)">{renderEntityVisual(EntityType.TROOPER)}</g>
         </svg>
     ) },
-    { type: EntityType.MARKER, label: 'Marker', icon: getPreviewIcon(EntityType.MARKER) },
+    { type: EntityType.ORDERLY, label: 'Orderly', icon: getPreviewIcon(EntityType.ORDERLY) },
   ];
 
   // Furniture items with scaled viewboxes for larger items
@@ -124,7 +126,7 @@ export const SpritePanel: React.FC<SpritePanelProps> = ({ isOpen, onToggle, onDr
         </div>
 
         {/* List */}
-        <div className="p-2 space-y-3 overflow-y-auto flex-1">
+        <div className="p-2 space-y-3 overflow-y-auto flex-1 custom-scrollbar">
           {activeItems.map((item) => (
             <div
               key={item.type}

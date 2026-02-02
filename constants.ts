@@ -7,8 +7,8 @@ export const GRID_MAJOR_INTERVAL = 5; // Bold line every 5 paces
 
 // Canvas Defaults
 export const DEFAULT_ZOOM = 1;
-export const MIN_ZOOM = 0.5;
-export const MAX_ZOOM = 3;
+export const MIN_ZOOM = 0.01; // 1%
+export const MAX_ZOOM = 5;    // 500%
 
 // Entity Dimensions (in Paces)
 // Requirement: All sprites should be of the same size.
@@ -19,9 +19,11 @@ export const ENTITY_SIZE_MAP: Record<EntityType, number> = {
   [EntityType.RSM]: UNIFORM_SIZE,
   [EntityType.COLOURS]: UNIFORM_SIZE,
   [EntityType.TROOPER]: UNIFORM_SIZE,
+  [EntityType.ORDERLY]: UNIFORM_SIZE,
   [EntityType.OFFICER]: UNIFORM_SIZE,
   [EntityType.MARKER]: UNIFORM_SIZE,
   [EntityType.REVIEWING_OFFICER]: UNIFORM_SIZE,
+  [EntityType.HOST]: UNIFORM_SIZE,
   [EntityType.CONTINGENT]: UNIFORM_SIZE, // Only used for icon drag reference
   
   // Furniture
@@ -39,7 +41,7 @@ export const ENTITY_SIZE_MAP: Record<EntityType, number> = {
 export const TERRAIN_COLORS: Record<TerrainType, string> = {
   ASPHALT: '#374151', // tailwind gray-700
   GRASS: '#15803d',   // tailwind green-700
-  SAND: '#d97706',    // tailwind amber-600
+  SAND: '#e6ccb2',    // Lighter beige/sand color
 };
 
 export const SELECTION_COLOR = '#3b82f6'; // blue-500 (Used for entity highlights)

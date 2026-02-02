@@ -8,8 +8,10 @@ export enum EntityType {
   CONTINGENT = 'CONTINGENT', // Composite
   TROOPER = 'TROOPER', // Single unit
   OFFICER = 'OFFICER', // Single unit
+  ORDERLY = 'ORDERLY', // Single unit
   MARKER = 'MARKER',
   REVIEWING_OFFICER = 'REVIEWING_OFFICER',
+  HOST = 'HOST', // VIP Host
   
   // Furniture
   SALUTING_BASE = 'SALUTING_BASE',
@@ -63,6 +65,8 @@ export interface GroupMetadata {
 
 export type ActionType = 'MOVE' | 'TURN' | 'WHEEL';
 
+export type AnchorPosition = 'TL' | 'TM' | 'TR' | 'CL' | 'C' | 'CR' | 'BL' | 'BM' | 'BR';
+
 export interface AnimationAction {
   id: string;
   type: ActionType;
@@ -72,13 +76,17 @@ export interface AnimationAction {
     // For Move
     targetX?: number;
     targetY?: number;
+    movePathMode?: 'DIRECT' | 'ORTHOGONAL';
+    orthogonalOrder?: 'X_THEN_Y' | 'Y_THEN_X';
+    groupAnchor?: AnchorPosition; // Which point of the group aligns to targetX/Y
+    waypoint?: Coordinates; // Intermediate "Pre-Destination" point
     
     // For Turn
     targetRotation?: number; // 0, 90, 180, 270
     
     // For Wheel
     wheelAngle?: number; // usually 90 or -90
-    pivotCorner?: 'TL' | 'TR'; // Top-Left or Top-Right relative to formation
+    pivotCorner?: 'TL' | 'TR' | 'BL' | 'BR' | 'CENTER'; // Pivot point
   };
 }
 
