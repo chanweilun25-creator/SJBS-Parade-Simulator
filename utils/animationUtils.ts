@@ -1,5 +1,5 @@
 
-import { Entity, ParadeState, AnimationAction, GroupMetadata, AnchorPosition } from '../types';
+import { Entity, ParadeState, AnimationAction, GroupMetadata } from '../types';
 
 // Helper to ease values
 const lerp = (start: number, end: number, t: number) => {
@@ -134,9 +134,9 @@ export const getParadeStateAtTime = (baseState: ParadeState, time: number): { en
             } else if (action.type === 'WHEEL') {
                 // Single entity wheeling (orbiting a point)
                  const angle = action.payload.wheelAngle || 90;
-                 const rad = (angle * (Math.PI / 180)) * clampedProgress;
-                 const cos = Math.cos(rad);
-                 const sin = Math.sin(rad);
+                 // const rad = (angle * (Math.PI / 180)) * clampedProgress;
+                 // const cos = Math.cos(rad);
+                 // const sin = Math.sin(rad);
 
                  // Pivot defaults to entity center if not specified? 
                  // For single entity, wheel usually means rotate around a point.
